@@ -14,18 +14,24 @@ MP = {}
 MP['dir'] = 'catalogues/'
 
 # Image width/height, assuming square images.
-MP['dim'] = 256
+# MP['dim'] = 256
+MP['dim'] = 32
 
 # Batch size: smaller values = less memory but less accurate gradient estimate
 MP['bs'] = 8
+MP['bs'] = 1
 
 # Number of training epochs.
 MP['epochs'] = 4
+MP['epochs'] = 1
 
 # Number of train/valid/test samples, needs to be a multiple of batch size.
 MP['n_train'] = 30000
+MP['n_train'] = 300
 MP['n_dev'] = 5000
+MP['n_dev'] = 50
 MP['n_test'] = 5000
+MP['n_test'] = 50
 
 # Save model (binary flag) and directory.
 MP['save_models'] = 1
