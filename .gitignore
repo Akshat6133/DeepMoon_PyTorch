@@ -17,4 +17,6 @@ docs/.ipynb_checkpoints/
 # Mac OSX
 .DS_Store
 
-./catalogue/*
+catalogue/*
+!catalogue/HeadCraters.csv
+!catalogue/LROCCraters.csv
