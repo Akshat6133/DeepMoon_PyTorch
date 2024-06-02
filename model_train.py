@@ -4,20 +4,15 @@
 Functions for building and training a (UNET) Convolutional Neural Network on
 images of the Moon and binary ring targets.
 """
-from __future__ import absolute_import, division, print_function
-
 import numpy as np
 import pandas as pd
 import h5py
 
-from keras.models import Model
-from keras.layers.core import Dropout, Reshape
-from keras.regularizers import l2
-
-from keras.optimizers import Adam
-from keras.callbacks import EarlyStopping
-from keras import backend as K
-K.set_image_dim_ordering('tf')
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
 
 import utils.template_match_target as tmt
 import utils.processing as proc
@@ -95,8 +90,8 @@ def custom_image_generator(data, target, batch_size=32):
             d, t = data[i:i + batch_size].copy(), target[i:i + batch_size].copy()
 
             # Random color inversion
-            # for j in np.where(np.random.randint(0, 2, batch_size) == 1)[0]:
-            #     d[j][d[j] > 0.] = 1. - d[j][d[j] > 0.]
+            for j in np.where(np.random.randint(0, 2, batch_size) == 1)[0]:
+                d[j][d[j] > 0.] = 1. - d[j][d[j] > 0.]
 
             # Horizontal/vertical flips
             for j in np.where(np.random.randint(0, 2, batch_size) == 1)[0]:
