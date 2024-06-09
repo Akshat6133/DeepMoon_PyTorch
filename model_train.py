@@ -17,32 +17,25 @@ from torchvision import transforms
 import utils.template_match_target as tmt
 import utils.processing as proc
 
-# Check Keras version - code will switch API if needed.
-from keras import __version__ as keras_version
-k2 = True if keras_version[0] == '2' else False
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-# If Keras is v2.x.x, create Keras 1-syntax wrappers.
-if not k2:
-    from keras.layers import merge, Input
-    from keras.layers.convolutional import (Convolution2D, MaxPooling2D,
-                                            UpSampling2D)
+k2 = True  # Assuming Keras 2 is being used
 
+if k2:
+    from torch import cat as merge
+    from torch.nn import Conv2d as Convolution2D
+    from torch.nn import MaxPool2d as MaxPooling2D
+    from torch.nn import Upsample as UpSampling2D
 else:
-    from keras.layers import Concatenate, Input
-    from keras.layers.convolutional import (Conv2D, MaxPooling2D,
-                                            UpSampling2D)
+    raise ValueError("Only PyTorch 2 syntax is supported.")
 
-    def merge(layers, mode=None, concat_axis=None):
-        """Wrapper for Keras 2's Concatenate class (`mode` is discarded)."""
-        return Concatenate(axis=concat_axis)(list(layers))
+# No need to define a wrapper function for merging layers in PyTorch, as it's directly available as `torch.cat`.
+# Also, there's no need to define a wrapper function for Conv2D, MaxPooling2D, and UpSampling2D in PyTorch.
+# We directly use the corresponding modules from torch.nn.
 
-    def Convolution2D(n_filters, FL, FLredundant, activation=None,
-                      init=None, W_regularizer=None, border_mode=None):
-        """Wrapper for Keras 2's Conv2D class."""
-        return Conv2D(n_filters, FL, activation=activation,
-                      kernel_initializer=init,
-                      kernel_regularizer=W_regularizer,
-                      padding=border_mode)
+# You can adjust the values of k2 and the imports according to your actual use case and PyTorch version.
 
 
 ########################
@@ -111,6 +104,11 @@ def custom_image_generator(data, target, batch_size=32):
                 t[j] = np.pad(t[j], (npix,), mode='constant')[npix + h[j]:L + h[j] + npix, 
                                                               npix + v[j]:W + v[j] + npix]
                 d[j], t[j] = np.rot90(d[j], r[j]), np.rot90(t[j], r[j])
+
+            # Convert numpy arrays to PyTorch tensors
+            d = torch.tensor(d).float()
+            t = torch.tensor(t).float()
+
             yield (d, t)
 
 ########################
@@ -125,8 +123,8 @@ def get_metrics(data, craters, dim, model, beta=1):
         Pandas arrays of human-counted crater data. 
     dim : int
         Dimension of input images (assumes square).
-    model : keras model object
-        Keras model
+    model : PyTorch model object
+        PyTorch model
     beta : int, optional
         Beta value when calculating F-beta score. Defaults to 1.
     """
@@ -157,12 +155,14 @@ def get_metrics(data, craters, dim, model, beta=1):
     frac_new, frac_new2, maxrad = [], [], []
     err_lo, err_la, err_r = [], [], []
     frac_duplicates = []
-    preds = model.predict(X)
+    model.eval()  # Set model to evaluation mode
+    with torch.no_grad():  # Disable gradient calculation
+        preds = model(torch.tensor(X).float())
     for i in range(n_csvs):
         if len(csvs[i]) < 3:
             continue
         (N_match, N_csv, N_detect, maxr,
-         elo, ela, er, frac_dupes) = tmt.template_match_t2c(preds[i], csvs[i],
+         elo, ela, er, frac_dupes) = tmt.template_match_t2c(preds[i].numpy(), csvs[i],
                                                             rmv_oor_csvs=0)
         if N_match > 0:
             p = float(N_match) / float(N_match + (N_detect - N_match))
@@ -185,7 +185,15 @@ def get_metrics(data, craters, dim, model, beta=1):
             print("skipping iteration %d,N_csv=%d,N_detect=%d,N_match=%d" %
                   (i, N_csv, N_detect, N_match))
 
-    print("binary XE score = %f" % model.evaluate(X, Y))
+    # Convert numpy arrays to PyTorch tensors
+    X_tensor = torch.tensor(X).float()
+    Y_tensor = torch.tensor(Y).float()
+
+    # Calculate binary cross-entropy loss
+    criterion = nn.BCELoss()
+    loss = criterion(model(X_tensor), Y_tensor)
+    print("binary XE score = %f" % loss.item())
+
     if len(recall) > 3:
         print("mean and std of N_match/N_csv (recall) = %f, %f" %
               (np.mean(recall), np.std(recall)))
@@ -216,97 +224,89 @@ def get_metrics(data, craters, dim, model, beta=1):
               %f""" % np.max(maxrad))
         print("")
 
+
 ########################
-def build_model(dim, learn_rate, lmbda, drop, FL, init, n_filters):
-    """Function that builds the (UNET) convolutional neural network. 
+class UNet(nn.Module):
+    def __init__(self, dim, n_filters, FL, init, drop, lmbda):
+        super(UNet, self).__init__()
 
-    Parameters
-    ----------
-    dim : int
-        Dimension of input images (assumes square).
-    learn_rate : float
-        Learning rate.
-    lmbda : float
-        Convolution2D regularization parameter. 
-    drop : float
-        Dropout fraction.
-    FL : int
-        Filter length.
-    init : string
-        Weight initialization type.
-    n_filters : int
-        Number of filters in each layer.
+        # Define layers
+        self.conv1 = nn.Conv2d(1, n_filters, FL, padding=FL // 2)
+        self.conv2 = nn.Conv2d(n_filters, n_filters, FL, padding=FL // 2)
+        self.conv3 = nn.Conv2d(n_filters, n_filters * 2, FL, padding=FL // 2)
+        self.conv4 = nn.Conv2d(n_filters * 2, n_filters * 2, FL, padding=FL // 2)
+        self.conv5 = nn.Conv2d(n_filters * 2, n_filters * 4, FL, padding=FL // 2)
+        self.conv6 = nn.Conv2d(n_filters * 4, n_filters * 4, FL, padding=FL // 2)
+        self.conv7 = nn.Conv2d(n_filters * 4, n_filters * 4, FL, padding=FL // 2)
+        self.conv8 = nn.Conv2d(n_filters * 4, n_filters * 4, FL, padding=FL // 2)
+        self.conv9 = nn.Conv2d(n_filters * 4, n_filters * 2, FL, padding=FL // 2)
+        self.conv10 = nn.Conv2d(n_filters * 2, n_filters * 2, FL, padding=FL // 2)
+        self.conv11 = nn.Conv2d(n_filters * 2, n_filters, FL, padding=FL // 2)
+        self.conv12 = nn.Conv2d(n_filters, n_filters, FL, padding=FL // 2)
+        self.conv13 = nn.Conv2d(n_filters, 1, 1, padding=0)
 
-    Returns
-    -------
-    model : keras model object
-        Constructed Keras model.
-    """
-    print('Making UNET model...')
-    img_input = Input(batch_shape=(None, dim, dim, 1))
+        # Define pooling layers
+        self.maxpool = nn.MaxPool2d(2, 2)
 
-    a1 = Convolution2D(n_filters, FL, FL, activation='relu', init=init,
-                       W_regularizer=l2(lmbda), border_mode='same')(img_input)
-    a1 = Convolution2D(n_filters, FL, FL, activation='relu', init=init,
-                       W_regularizer=l2(lmbda), border_mode='same')(a1)
-    a1P = MaxPooling2D((2, 2), strides=(2, 2))(a1)
+        # Define upsampling layers
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
-    a2 = Convolution2D(n_filters * 2, FL, FL, activation='relu', init=init,
-                       W_regularizer=l2(lmbda), border_mode='same')(a1P)
-    a2 = Convolution2D(n_filters * 2, FL, FL, activation='relu', init=init,
-                       W_regularizer=l2(lmbda), border_mode='same')(a2)
-    a2P = MaxPooling2D((2, 2), strides=(2, 2))(a2)
+        # Define dropout layer
+        self.dropout = nn.Dropout(drop)
 
-    a3 = Convolution2D(n_filters * 4, FL, FL, activation='relu', init=init,
-                       W_regularizer=l2(lmbda), border_mode='same')(a2P)
-    a3 = Convolution2D(n_filters * 4, FL, FL, activation='relu', init=init,
-                       W_regularizer=l2(lmbda), border_mode='same')(a3)
-    a3P = MaxPooling2D((2, 2), strides=(2, 2),)(a3)
+        # Initialization
+        if init == 'he_normal':
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+        elif init == 'glorot_uniform':
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d):
+                    nn.init.xavier_uniform_(m.weight)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+        else:
+            raise ValueError("Unknown initialization: " + str(init))
 
-    u = Convolution2D(n_filters * 4, FL, FL, activation='relu', init=init,
-                      W_regularizer=l2(lmbda), border_mode='same')(a3P)
-    u = Convolution2D(n_filters * 4, FL, FL, activation='relu', init=init,
-                      W_regularizer=l2(lmbda), border_mode='same')(u)
+    def forward(self, x):
+        a1 = F.relu(self.conv1(x))
+        a1 = F.relu(self.conv2(a1))
+        a1P = self.maxpool(a1)
 
-    u = UpSampling2D((2, 2))(u)
-    u = merge((a3, u), mode='concat', concat_axis=3)
-    u = Dropout(drop)(u)
-    u = Convolution2D(n_filters * 2, FL, FL, activation='relu', init=init,
-                      W_regularizer=l2(lmbda), border_mode='same')(u)
-    u = Convolution2D(n_filters * 2, FL, FL, activation='relu', init=init,
-                      W_regularizer=l2(lmbda), border_mode='same')(u)
+        a2 = F.relu(self.conv3(a1P))
+        a2 = F.relu(self.conv4(a2))
+        a2P = self.maxpool(a2)
 
-    u = UpSampling2D((2, 2))(u)
-    u = merge((a2, u), mode='concat', concat_axis=3)
-    u = Dropout(drop)(u)
-    u = Convolution2D(n_filters, FL, FL, activation='relu', init=init,
-                      W_regularizer=l2(lmbda), border_mode='same')(u)
-    u = Convolution2D(n_filters, FL, FL, activation='relu', init=init,
-                      W_regularizer=l2(lmbda), border_mode='same')(u)
+        a3 = F.relu(self.conv5(a2P))
+        a3 = F.relu(self.conv6(a3))
+        a3P = self.maxpool(a3)
 
-    u = UpSampling2D((2, 2))(u)
-    u = merge((a1, u), mode='concat', concat_axis=3)
-    u = Dropout(drop)(u)
-    u = Convolution2D(n_filters, FL, FL, activation='relu', init=init,
-                      W_regularizer=l2(lmbda), border_mode='same')(u)
-    u = Convolution2D(n_filters, FL, FL, activation='relu', init=init,
-                      W_regularizer=l2(lmbda), border_mode='same')(u)
+        u = F.relu(self.conv7(a3P))
+        u = F.relu(self.conv8(u))
 
-    # Final output
-    final_activation = 'sigmoid'
-    u = Convolution2D(1, 1, 1, activation=final_activation, init=init,
-                      W_regularizer=l2(lmbda), border_mode='same')(u)
-    u = Reshape((dim, dim))(u)
-    if k2:
-        model = Model(inputs=img_input, outputs=u)
-    else:
-        model = Model(input=img_input, output=u)
+        u = self.upsample(u)
+        u = torch.cat((a3, u), dim=1)
+        u = self.dropout(u)
+        u = F.relu(self.conv9(u))
+        u = F.relu(self.conv10(u))
 
-    optimizer = Adam(lr=learn_rate)
-    model.compile(loss='binary_crossentropy', optimizer=optimizer)
-    print(model.summary())
+        u = self.upsample(u)
+        u = torch.cat((a2, u), dim=1)
+        u = self.dropout(u)
+        u = F.relu(self.conv11(u))
+        u = F.relu(self.conv12(u))
 
-    return model
+        u = self.upsample(u)
+        u = torch.cat((a1, u), dim=1)
+        u = self.dropout(u)
+        u = F.relu(self.conv11(u))
+        u = F.relu(self.conv12(u))
+
+        u = self.conv13(u)
+        return torch.sigmoid(u)
+
 
 ########################
 def train_and_test_model(Data, Craters, MP, i_MP):
@@ -336,40 +336,43 @@ def train_and_test_model(Data, Craters, MP, i_MP):
     drop = get_param_i(MP['dropout'], i_MP)
 
     # Build model
-    model = build_model(dim, learn_rate, lmbda, drop, FL, init, n_filters)
+    model = UNet(dim, n_filters, FL, init, drop, lmbda)
+
+    # Define loss function and optimizer
+    criterion = nn.BCELoss()
+    optimizer = optim.Adam(model.parameters(), lr=learn_rate)
 
     # Main loop
     n_samples = MP['n_train']
     for nb in range(nb_epoch):
-        if k2:
-            model.fit_generator(
-                custom_image_generator(Data['train'][0], Data['train'][1],
-                                       batch_size=bs),
-                steps_per_epoch=n_samples/bs, epochs=1, verbose=1,
-                # validation_data=(Data['dev'][0],Data['dev'][1]), #no gen
-                validation_data=custom_image_generator(Data['dev'][0],
-                                                       Data['dev'][1],
-                                                       batch_size=bs),
-                validation_steps=n_samples,
-                callbacks=[
-                    EarlyStopping(monitor='val_loss', patience=3, verbose=0)])
-        else:
-            model.fit_generator(
-                custom_image_generator(Data['train'][0], Data['train'][1],
-                                       batch_size=bs),
-                samples_per_epoch=n_samples, nb_epoch=1, verbose=1,
-                # validation_data=(Data['dev'][0],Data['dev'][1]), #no gen
-                validation_data=custom_image_generator(Data['dev'][0],
-                                                       Data['dev'][1],
-                                                       batch_size=bs),
-                nb_val_samples=n_samples,
-                callbacks=[
-                    EarlyStopping(monitor='val_loss', patience=3, verbose=0)])
+        model.train()  # Set model to training mode
+        running_loss = 0.0
+        for i, data in enumerate(custom_image_generator(Data['train'][0], Data['train'][1], batch_size=bs), 0):
+            inputs, labels = data
+            optimizer.zero_grad()  # Zero the parameter gradients
+            outputs = model(inputs)  # Forward pass
+            loss = criterion(outputs, labels)  # Compute the loss
+            loss.backward()  # Backward pass
+            optimizer.step()  # Optimize
+            running_loss += loss.item()
 
-        get_metrics(Data['dev'], Craters['dev'], dim, model)
+        # Print average loss
+        print('[Epoch %d] loss: %.3f' % (nb + 1, running_loss / n_samples))
+
+        # Evaluate model on validation set
+        model.eval()  # Set model to evaluation mode
+        with torch.no_grad():
+            dev_loss = 0.0
+            for data in custom_image_generator(Data['dev'][0], Data['dev'][1], batch_size=bs):
+                inputs, labels = data
+                outputs = model(inputs)
+                dev_loss += criterion(outputs, labels).item()
+
+            # Print validation loss
+            print('[Validation] loss: %.3f' % (dev_loss / n_samples))
 
     if MP['save_models'] == 1:
-        model.save(MP['save_dir'])
+        torch.save(model.state_dict(), MP['save_dir'])
 
     print("###################################")
     print("##########END_OF_RUN_INFO##########")
@@ -380,6 +383,7 @@ def train_and_test_model(Data, Craters, MP, i_MP):
     get_metrics(Data['test'], Craters['test'], dim, model)
     print("###################################")
     print("###################################")
+
 
 ########################
 def get_models(MP):
@@ -398,12 +402,12 @@ def get_models(MP):
     dev = h5py.File('%sdev_images.hdf5' % dir, 'r')
     test = h5py.File('%stest_images.hdf5' % dir, 'r')
     Data = {
-        'train': [train['input_images'][:n_train].astype('float32'),
-                  train['target_masks'][:n_train].astype('float32')],
-        'dev': [dev['input_images'][:n_dev].astype('float32'),
-                  dev['target_masks'][:n_dev].astype('float32')],
-        'test': [test['input_images'][:n_test].astype('float32'),
-                 test['target_masks'][:n_test].astype('float32')]
+        'train': [torch.tensor(train['input_images'][:n_train]).float(),
+                  torch.tensor(train['target_masks'][:n_train]).float()],
+        'dev': [torch.tensor(dev['input_images'][:n_dev]).float(),
+                torch.tensor(dev['target_masks'][:n_dev]).float()],
+        'test': [torch.tensor(test['input_images'][:n_test]).float(),
+                 torch.tensor(test['target_masks'][:n_test]).float()]
     }
     train.close()
     dev.close()
@@ -422,3 +426,22 @@ def get_models(MP):
     # Iterate over parameters
     for i in range(MP['N_runs']):
         train_and_test_model(Data, Craters, MP, i)
+
+
+
+
+# from keras.callbacks import Callback
+
+# class NaNCheck(Callback):
+#     def on_batch_end(self, batch, logs=None):
+#         loss = logs.get('loss')
+#         if loss is not None and np.isnan(loss):
+#             print("Training halted due to NaN loss.")
+#             raise ValueError("Training halted due to NaN loss.")
+
+# from tensorflow.keras.callbacks import TensorBoard
+
+# tensorboard_callback = TensorBoard(log_dir='./logs')
+
+# model.fit(X_train, y_train, batch_size=32, epochs=50, validation_data=(X_val, y_val), callbacks=[tensorboard_callback])
+
