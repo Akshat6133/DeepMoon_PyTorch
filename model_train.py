@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
+from torchvision.transforms import v2
 
 import utils.template_match_target as tmt
 import utils.processing as proc
