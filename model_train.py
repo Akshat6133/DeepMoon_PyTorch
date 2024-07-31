@@ -38,6 +38,8 @@ else:
 # You can adjust the values of k2 and the imports according to your actual use case and PyTorch version.
 
 
+#Using transforms.v2 instead of torchvision.transforms to randomly transform both image and mask in sync.
+
 ########################
 def get_param_i(param, i):
     """Gets correct parameter for iteration i.
