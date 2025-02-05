@@ -113,7 +113,11 @@ transform = v2.Compose([
     v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
     v2.ToTensor(),
 ])
+########################
+def custom_image_generator(data, target, batch_size=32):
 
+    dataset = CraterDataset(data, target, transform=transform)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 ########################
 def get_metrics(data, craters, dim, model, beta=1):
     """Function that prints pertinent metrics at the end of each epoch. 
