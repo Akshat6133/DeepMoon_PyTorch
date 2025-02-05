@@ -246,29 +246,41 @@ class UNet(nn.Module):
         self.conv6 = nn.Conv2d(n_filters * 4, n_filters * 4, FL, padding=FL // 2)
         self.conv7 = nn.Conv2d(n_filters * 4, n_filters * 4, FL, padding=FL // 2)
         self.conv8 = nn.Conv2d(n_filters * 4, n_filters * 4, FL, padding=FL // 2)
-        self.conv9 = nn.Conv2d(n_filters * 4, n_filters * 2, FL, padding=FL // 2)
+        self.conv9 = nn.Conv2d(
+            n_filters * 8, n_filters * 2, FL, padding=FL // 2
+        )  # Changed input channels
         self.conv10 = nn.Conv2d(n_filters * 2, n_filters * 2, FL, padding=FL // 2)
-        self.conv11 = nn.Conv2d(n_filters * 2, n_filters, FL, padding=FL // 2)
+        self.conv11 = nn.Conv2d(
+            n_filters * 4, n_filters, FL, padding=FL // 2
+        )  # Changed input channels
         self.conv12 = nn.Conv2d(n_filters, n_filters, FL, padding=FL // 2)
-        self.conv13 = nn.Conv2d(n_filters, 1, 1, padding=0)
+        self.conv13 = nn.Conv2d(
+            n_filters * 2, n_filters, FL, padding=FL // 2
+        )  # Added to match concatenation
+        self.conv14 = nn.Conv2d(
+            n_filters, n_filters, FL, padding=FL // 2
+        )  # Added to match concatenation
+        self.final_conv = nn.Conv2d(n_filters, 1, 1, padding=0)
 
         # Define pooling layers
         self.maxpool = nn.MaxPool2d(2, 2)
 
         # Define upsampling layers
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.upsample = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
 
         # Define dropout layer
         self.dropout = nn.Dropout(drop)
 
         # Initialization
-        if init == 'he_normal':
+        if init == "he_normal":
             for m in self.modules():
                 if isinstance(m, nn.Conv2d):
-                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    nn.init.kaiming_normal_(
+                        m.weight, mode="fan_out", nonlinearity="relu"
+                    )
                     if m.bias is not None:
                         nn.init.constant_(m.bias, 0)
-        elif init == 'glorot_uniform':
+        elif init == "glorot_uniform":
             for m in self.modules():
                 if isinstance(m, nn.Conv2d):
                     nn.init.xavier_uniform_(m.weight)
@@ -308,12 +320,11 @@ class UNet(nn.Module):
         u = self.upsample(u)
         u = torch.cat((a1, u), dim=1)
         u = self.dropout(u)
-        u = F.relu(self.conv11(u))
-        u = F.relu(self.conv12(u))
+        u = F.relu(self.conv13(u))
+        u = F.relu(self.conv14(u))
 
-        u = self.conv13(u)
+        u = self.final_conv(u)
         return torch.sigmoid(u)
-
 
 ########################
 def train_and_test_model(Data, Craters, MP, i_MP):
