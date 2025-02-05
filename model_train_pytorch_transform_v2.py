@@ -105,6 +105,14 @@ def check_random_transform(self,image,mask,transform):
     
     plt.imsave(image_and_mask_path+'_new_image.png',numpy_image.squeeze(0),cmap='gray')
     plt.imsave(image_and_mask_path+'_new_mask.png',numpy_mask,cmap='gray')
+########################
+transform = v2.Compose([
+    v2.RandomHorizontalFlip(),
+    v2.RandomVerticalFlip(),
+    v2.RandomRotation(degrees=45),
+    v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+    v2.ToTensor(),
+])
 
 ########################
 def get_metrics(data, craters, dim, model, beta=1):
