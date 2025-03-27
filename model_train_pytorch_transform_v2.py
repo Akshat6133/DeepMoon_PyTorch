@@ -23,7 +23,6 @@ import torch.nn.functional as F
 torch.manual_seed(0)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 import matplotlib.pyplot as plt
-image_and_mask_path = ''
 
 ########################
 def get_param_i(param, i):
