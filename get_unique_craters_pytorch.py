@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Unique Crater Distribution Functions
 
 Functions for extracting craters from model target predictions and filtering
@@ -8,11 +7,11 @@ from __future__ import absolute_import, division, print_function
 
 import numpy as np
 import h5py
-import sys
 import utils.template_match_target as tmt
 import utils.processing as proc
 import utils.transform as trf
-#from keras.models import load_model
+import torch
+from model_train_transform_v2 import UNet
 
 #########################
 def get_model_preds(CP):
@@ -36,16 +35,37 @@ def get_model_preds(CP):
     Data = {
         dtype: [data['input_images'][:n_imgs].astype('float32'),
                 data['target_masks'][:n_imgs].astype('float32')]
-    }
+    } 
     data.close()
-    proc.preprocess(Data)
+    proc.preprocess_numpy(Data)
+    device = torch.device("cuda")
+    model = UNet(dim = 256,n_filters=112,FL=3,init='he_normal',drop=0.15,lmbda=0.00000).to(device)
+    model.load_state_dict(torch.load(CP['dir_model'], map_location=lambda storage, loc: storage.cuda(device)))
 
-    model = load_model(CP['dir_model'])
-    preds = model.predict(Data[dtype][0])
+    preds_list = []
 
-    # save
+
+    test_tensor = torch.tensor(Data[dtype][0]).permute(0,3,1,2).to(device)
+    for i in range(len(test_tensor)):
+        test_tensor_slice = test_tensor[i].unsqueeze(0)
+        prediction = model(test_tensor_slice)
+        prediction_cpu = prediction.cpu()
+        torch.cuda.empty_cache()
+        prediction_numpy = prediction_cpu.permute(0,2,3,1).detach().numpy()
+        squeezed_pred = prediction_numpy.squeeze((0,-1))
+        preds_list.append(prediction_numpy.squeeze(0))
+        del prediction_cpu
+        del prediction
+        del squeezed_pred
+        del prediction_numpy
+    preds = np.array(preds_list)
+
+    print(preds.shape)
+    print(np.max(preds))
+    print(type(preds))
     h5f = h5py.File(CP['dir_preds'], 'w')
-    h5f.create_dataset(dtype, data=preds)
+    print(dtype)
+    h5f.create_dataset(dtype, data = preds)
     print("Successfully generated and saved model predictions.")
     return preds
 
@@ -163,26 +183,28 @@ def extract_unique_craters(CP, craters_unique):
         Filled master array of unique crater tuples.
     """
 
-    # Load/generate model preds
     try:
         preds = h5py.File(CP['dir_preds'], 'r')[CP['datatype']]
         print("Loaded model predictions successfully")
     except:
         print("Couldnt load model predictions, generating")
         preds = get_model_preds(CP)
+        if CP['run_template_matching'] == False:
+            print('just generated model predictions')
+            return(np.empty([0, 3]))
 
-    # need for long/lat bounds
     P = h5py.File(CP['dir_data'], 'r')
     llbd, pbd, distcoeff = ('longlat_bounds', 'pix_bounds',
                             'pix_distortion_coefficient')
-    #r_moon = 1737.4
+
     dim = (float(CP['dim']), float(CP['dim']))
 
     N_matches_tot = 0
+    print('Generating template matches')
     for i in range(CP['n_imgs']):
         id = proc.get_id(i)
 
-        coords = tmt.template_match_t(preds[i])
+        coords = tmt.template_match_t(preds[i].squeeze(-1))
 
         # convert, add to master dist
         if len(coords) > 0:
@@ -195,7 +217,7 @@ def extract_unique_craters(CP, craters_unique):
             if len(craters_unique) > 0:
                 craters_unique = add_unique_craters(new_craters_unique,
                                                     craters_unique,
-                                                    CP['llt2'], CP['rt'])
+                                                    CP['llt2'], CP['rt2'])
             else:
                 craters_unique = np.concatenate((craters_unique,
                                                  new_craters_unique))
