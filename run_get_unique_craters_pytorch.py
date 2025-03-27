@@ -3,7 +3,7 @@
     Execute extracting craters from model target predictions and filtering
     out duplicates.
     """
-import get_unique_craters as guc
+import get_unique_craters_pytorch as guc
 import numpy as np
 import torch
 
