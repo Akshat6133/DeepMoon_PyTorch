@@ -82,10 +82,6 @@ def check_random_transform(self,image,mask,transform):
     numpy_image= image_cpu.detach().numpy()
     numpy_mask = mask_cpu.detach().numpy()
 
-    
-    plt.imsave(image_and_mask_path+'_new_image.png',numpy_image.squeeze(0),cmap='gray')
-    plt.imsave(image_and_mask_path+'_new_mask.png',numpy_mask,cmap='gray')
-
 
 transform = v2.Compose([
     v2.RandomHorizontalFlip(),
